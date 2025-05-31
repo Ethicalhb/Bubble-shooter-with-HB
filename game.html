@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Full-Screen Bubble Shooter (Mobile/Desktop, Sound, Medium Balls)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+  <style>
+    html, body {
+      width: 100vw; height: 100vh; margin: 0; padding: 0; background: #181818;
+      overflow: hidden;
+    }
+    body { width: 100vw; height: 100vh; margin: 0; padding: 0; overflow: hidden; }
+    #game {
+      background: #111; display: block; position: absolute; left: 0; top: 0;
+      width: 100vw; height: 100vh; touch-action: none;
+    }
+    #restartBtn {
+      position: absolute;
+      left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      padding: 18px 36px;
+      font-size: 1.5em;
+      background: #333;
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      display: none;
+      z-index: 10;
+      box-shadow: 0 2px 24px #0008;
+    }
+  </style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<button id="restartBtn">Restart</button>
+
+<!-- Sound Effects (short, mobile-friendly, public domain) -->
+<audio id="shootSound" src="https://cdn.pixabay.com/audio/2022/10/16/audio_12b7b6c8f3.mp3" preload="auto"></audio>
+<audio id="popSound" src="https://cdn.pixabay.com/audio/2022/10/16/audio_12b7b6c8f3.mp3" preload="auto"></audio>
+<audio id="gameOverSound" src="https://cdn.pixabay.com/audio/2022/10/16/audio_12b7b6c8f3.mp3" preload="auto"></audio>
+<audio id="restartSound" src="https://cdn.pixabay.com/audio/2022/10/16/audio_12b7b6c8f3.mp3" preload="auto"></audio>
+
+<script>
+const COLORS = ['#ff4444', '#44ff44', '#4444ff', '#ffff44', '#44ffff', '#ff44ff'];
+let canvas = document.getElementById('game');
+let ctx = canvas.getContext('2d');
+let restartBtn = document.getElementById('restartBtn');
+
+// Sound elements
+const shootSound = document.getElementById('shootSound');
+const popSound = document.getElementById('popSound');
+const gameOverSound = document.getElementById('gameOverSound');
+const restartSound = document.getElementById('restartSound');
+
+let COLS = 10, ROWS = 14, GRID = 0, BUBBLE_RADIUS = 0;
+let grid = [];
+let points = 0, stage = 1;
+let shooter, fallCounter = 0, gameOver = false;
+let shotsFired = 0, shotsPerRow = 7;
+let CANVAS_WIDTH, CANVAS_HEIGHT;
+
+function resize() {
+  CANVAS_WIDTH = window.innerWidth;
+  CANVAS_HEIGHT = window.innerHeight;
+  canvas.width = CANVAS_WIDTH;
+  canvas.height = CANVAS_HEIGHT;
+  // Medium balls: 10 cols, 14 rows, grid fills screen
+  GRID = Math.floor(Math.min(CANVAS_WIDTH / (COLS + 0.5), (CANVAS_HEIGHT-80) / (ROWS + 1)));
+  BUBBLE_RADIUS = GRID * 0.44;
+}
+resize();
+window.addEventListener('resize', () => {
+  resize();
+  initGrid();
+  shooter.x = CANVAS_WIDTH/2;
+  shooter.y = CANVAS_HEIGHT - 60;
+});
+
+function initGrid() {
+  grid = [];
+  for (let r = 0; r < ROWS; r++) {
+    grid[r] = [];
+    for (let c = 0; c < COLS; c++) {
+      grid[r][c] = (r < 3+stage && Math.random() > 0.3) ? COLORS[Math.floor(Math.random()*COLORS.length)] : null;
+    }
+  }
+}
+function initShooter() {
+  shooter = {
+    x: CANVAS_WIDTH / 2,
+    y: CANVAS_HEIGHT - 60,
+    angle: Math.PI / 2,
+    color: COLORS[Math.floor(Math.random()*COLORS.length)],
+    moving: false,
+    vx: 0,
+    vy: 0
+  };
+}
+function restartGame() {
+  points = 0;
+  stage = 1;
+  gameOver = false;
+  restartBtn.style.display = 'none';
+  resize();
+  initGrid();
+  initShooter();
+  shotsFired = 0;
+  playSound(restartSound);
+}
+initGrid();
+initShooter();
+
+function drawBubble(x, y, color, alpha=1) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  let grad = ctx.createRadialGradient(x-BUBBLE_RADIUS/3, y-BUBBLE_RADIUS/3, BUBBLE_RADIUS/4, x, y, BUBBLE_RADIUS);
+  grad.addColorStop(0, "#fff");
+  grad.addColorStop(0.3, color);
+  grad.addColorStop(1, "#222");
+  ctx.beginPath();
+  ctx.arc(x, y, BUBBLE_RADIUS, 0, 2*Math.PI);
+  ctx.fillStyle = grad;
+  ctx.shadowColor = color+'a0';
+  ctx.shadowBlur = 8;
+  ctx.fill();
+  ctx.strokeStyle = "#888";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawGrid() {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (grid[r][c]) {
+        let x = c * GRID + GRID/2 + (r%2 ? GRID/2 : 0) + (CANVAS_WIDTH - (COLS*GRID + GRID/2))/2;
+        let y = r * GRID + GRID/2 + 30;
+        drawBubble(x, y, grid[r][c]);
+      }
+    }
+  }
+}
+
+function drawScore() {
+  ctx.save();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold ' + Math.round(GRID/2.2) + 'px Arial';
+  ctx.fillText('Score: ' + points, 18, CANVAS_HEIGHT - 18);
+  ctx.fillText('Stage: ' + stage, CANVAS_WIDTH - 120, CANVAS_HEIGHT - 18);
+  ctx.fillText('Shots to new row: ' + (shotsPerRow - shotsFired), 18, 36);
+  ctx.restore();
+}
+
+function drawShooter() {
+  let shooterX = shooter.x;
+  let shooterY = shooter.y;
+  drawBubble(shooterX, shooterY, shooter.color);
+  ctx.save();
+  ctx.strokeStyle = "#fff8";
+  ctx.setLineDash([6, 6]);
+  ctx.beginPath();
+  ctx.moveTo(shooterX, shooterY);
+  ctx.lineTo(shooterX + Math.cos(shooter.angle)*GRID*2, shooterY - Math.sin(shooter.angle)*GRID*2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function getNeighbors(r, c) {
+  let neighbors = [];
+  let directions = [[-1,0],[-1,1],[0,-1],[0,1],[1,0],[1,1]];
+  if (r % 2 === 0) directions = [[-1,-1],[-1,0],[0,-1],[0,1],[1,-1],[1,0]];
+  for (let [dr, dc] of directions) {
+    let nr = r + dr;
+    let nc = c + dc;
+    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
+      neighbors.push([nr, nc]);
+    }
+  }
+  return neighbors;
+}
+
+function findCluster(r, c, color, visited) {
+  let cluster = [];
+  let stack = [[r, c]];
+  while (stack.length > 0) {
+    let [cr, cc] = stack.pop();
+    if (visited[cr][cc]) continue;
+    visited[cr][cc] = true;
+    if (grid[cr][cc] === color) {
+      cluster.push([cr, cc]);
+      for (let [nr, nc] of getNeighbors(cr, cc)) {
+        if (!visited[nr][nc] && grid[nr][nc] === color) {
+          stack.push([nr, nc]);
+        }
+      }
+    }
+  }
+  return cluster;
+}
+
+function removeCluster(cluster) {
+  for (let [r, c] of cluster) {
+    grid[r][c] = null;
+  }
+  points += cluster.length * 100;
+  playSound(popSound);
+}
+
+function updateShooter() {
+  if (shooter.moving) {
+    shooter.x += shooter.vx;
+    shooter.y += shooter.vy;
+    // Bounce off left/right walls
+    if (shooter.x < BUBBLE_RADIUS) {
+      shooter.x = BUBBLE_RADIUS;
+      shooter.vx *= -1;
+    }
+    if (shooter.x > CANVAS_WIDTH - BUBBLE_RADIUS) {
+      shooter.x = CANVAS_WIDTH - BUBBLE_RADIUS;
+      shooter.vx *= -1;
+    }
+    let hit = false;
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        let x = c * GRID + GRID/2 + (r%2 ? GRID/2 : 0) + (CANVAS_WIDTH - (COLS*GRID + GRID/2))/2;
+        let y = r * GRID + GRID/2 + 30;
+        if (grid[r][c]) {
+          let dx = shooter.x - x;
+          let dy = shooter.y - y;
+          if (Math.sqrt(dx*dx + dy*dy) < BUBBLE_RADIUS*2-2) {
+            hit = true;
+            break;
+          }
+        }
+      }
+      if (hit) break;
+    }
+    if (shooter.y < BUBBLE_RADIUS + 30 || hit) {
+      // Snap to grid
+      let offsetX = (CANVAS_WIDTH - (COLS*GRID + GRID/2))/2;
+      let r = Math.round((shooter.y - GRID/2 - 30)/GRID);
+      let c = Math.round((shooter.x - offsetX - (r%2 ? GRID : 0)/2 - GRID/2)/GRID);
+      r = Math.max(0, Math.min(ROWS-1, r));
+      c = Math.max(0, Math.min(COLS-1, c));
+      if (!grid[r][c]) {
+        grid[r][c] = shooter.color;
+        // Check for clusters
+        let visited = Array.from({length: ROWS}, () => Array(COLS).fill(false));
+        let cluster = findCluster(r, c, shooter.color, visited);
+        if (cluster.length >= 3) {
+          removeCluster(cluster);
+        }
+      }
+      shooter.x = CANVAS_WIDTH/2;
+      shooter.y = CANVAS_HEIGHT - 60;
+      shooter.color = COLORS[Math.floor(Math.random()*COLORS.length)];
+      shooter.moving = false;
+      shotsFired++;
+      if (shotsFired >= shotsPerRow) {
+        setTimeout(addNewRowAtTop, 500);
+        shotsFired = 0;
+      }
+      // Check for stage clear
+      if (grid.flat().every(cell => !cell)) {
+        stage += 1;
+        initGrid();
+      }
+    }
+  }
+}
+
+function addNewRowAtTop() {
+  for (let r = ROWS-1; r > 0; r--) {
+    grid[r] = [...grid[r-1]];
+  }
+  grid[0] = Array.from({length: COLS}, () =>
+    Math.random() > 0.5 ? COLORS[Math.floor(Math.random()*COLORS.length)] : null
+  );
+}
+
+function checkGameOver() {
+  for (let c = 0; c < COLS; c++) {
+    if (grid[ROWS-1][c]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function showGameOver() {
+  ctx.save();
+  ctx.globalAlpha = 0.85;
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold " + Math.round(GRID*1.2) + "px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText("Game Over!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - GRID);
+  ctx.font = "bold " + Math.round(GRID*0.8) + "px Arial";
+  ctx.fillText("Score: " + points, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 10);
+  ctx.font = Math.round(GRID*0.6) + "px Arial";
+  ctx.fillText("Tap 'Restart' to play again", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + GRID);
+  ctx.textAlign = "start";
+  ctx.restore();
+  restartBtn.style.display = 'block';
+  playSound(gameOverSound);
+}
+
+function loop() {
+  ctx.clearRect(0,0,CANVAS_WIDTH,CANVAS_HEIGHT);
+  drawGrid();
+  drawShooter();
+  updateShooter();
+  drawScore();
+  if (!gameOver) {
+    let fallSpeed = Math.max(1200, 8000 - stage*400); // ms (very slow at first)
+    fallCounter++;
+    if (fallCounter > fallSpeed/16) { // ~60fps
+      addNewRowAtTop();
+      fallCounter = 0;
+    }
+    if (checkGameOver()) {
+      gameOver = true;
+      showGameOver();
+    } else {
+      requestAnimationFrame(loop);
+    }
+  } else {
+    showGameOver();
+  }
+}
+
+// Sound helper (mobile fix)
+function playSound(audio) {
+  if (audio && typeof audio.play === "function") {
+    try { audio.currentTime = 0; audio.play(); } catch(e){}
+  }
+}
+
+// Mouse/touch aiming
+function getPointerPos(e) {
+  let rect = canvas.getBoundingClientRect();
+  let x, y;
+  if (e.touches && e.touches.length) {
+    x = (e.touches[0].clientX - rect.left) * (CANVAS_WIDTH / rect.width);
+    y = (e.touches[0].clientY - rect.top) * (CANVAS_HEIGHT / rect.height);
+  } else {
+    x = (e.clientX - rect.left) * (CANVAS_WIDTH / rect.width);
+    y = (e.clientY - rect.top) * (CANVAS_HEIGHT / rect.height);
+  }
+  return {x, y};
+}
+
+canvas.addEventListener('mousemove', e => {
+  if (gameOver) return;
+  let {x, y} = getPointerPos(e);
+  shooter.angle = Math.atan2(shooter.y - y, x - shooter.x);
+  shooter.angle = Math.max(Math.PI/7, Math.min(6*Math.PI/7, shooter.angle));
+});
+canvas.addEventListener('touchmove', e => {
+  if (gameOver) return;
+  let {x, y} = getPointerPos(e);
+  shooter.angle = Math.atan2(shooter.y - y, x - shooter.x);
+  shooter.angle = Math.max(Math.PI/7, Math.min(6*Math.PI/7, shooter.angle));
+});
+
+canvas.addEventListener('click', () => {
+  if (gameOver) return;
+  if (!shooter.moving) {
+    shooter.vx = Math.cos(shooter.angle) * GRID * 0.33;
+    shooter.vy = -Math.sin(shooter.angle) * GRID * 0.33;
+    shooter.moving = true;
+    playSound(shootSound);
+  }
+});
+canvas.addEventListener('touchstart', e => {
+  if (gameOver) return;
+  if (!shooter.moving) {
+    let {x, y} = getPointerPos(e);
+    shooter.angle = Math.atan2(shooter.y - y, x - shooter.x);
+    shooter.angle = Math.max(Math.PI/7, Math.min(6*Math.PI/7, shooter.angle));
+    shooter.vx = Math.cos(shooter.angle) * GRID * 0.33;
+    shooter.vy = -Math.sin(shooter.angle) * GRID * 0.33;
+    shooter.moving = true;
+    playSound(shootSound);
+  }
+  e.preventDefault();
+}, {passive: false});
+
+restartBtn.addEventListener('click', () => {
+  restartGame();
+  loop();
+});
+loop();
+</script>
+</body>
+</html>
